@@ -227,11 +227,14 @@ except Exception:
 NAMES = {r["id"]: r["name"] for r in ROSTER}
 
 
+def reason(exc):
+    return str(exc) if isinstance(exc, store.StoreError) else "잠시 후 다시 시도하세요."
+
+
 def load_matches():
     try:
         return store.matches()
     except Exception:
-        st.warning("기록을 불러오지 못했습니다. 잠시 후 새로고침하세요. 계속되면 Secrets의 GITHUB_TOKEN과 저장소 이름을 확인하세요.")
         return []
 
 
@@ -325,8 +328,8 @@ def submit_match():
     editing = s.editing
     try:
         rows = [r for r in store.matches() if r["id"] != editing]
-    except Exception:
-        return flash("error", "기록을 불러오지 못했습니다. 잠시 후 다시 시도하세요.")
+    except Exception as exc:
+        return flash("error", "기록을 불러오지 못했습니다. " + reason(exc))
     sig = signature(ME["id"], my, opp, op, d.isoformat())
     same = [r for r in rows if signature(r["writer_id"], int(r["my_score"]), r["opp_id"], int(r["opp_score"]), r["match_date"]) == sig]
     if any(r["writer_id"] == ME["id"] for r in same):
@@ -342,8 +345,8 @@ def submit_match():
         else:
             store.add_match(row)
             flash("success", "경기 기록을 추가했습니다." + note)
-    except Exception:
-        return flash("error", "저장에 실패했습니다. 잠시 후 다시 시도하세요.")
+    except Exception as exc:
+        return flash("error", "저장에 실패했습니다. " + reason(exc))
     reset_form()
 
 
@@ -374,8 +377,8 @@ def delete_record(rec):
             flash("success", "경기 기록을 삭제했습니다.")
         else:
             flash("error", "삭제하지 못했습니다. 이미 지워진 기록이거나 내가 쓴 기록이 아닙니다.")
-    except Exception:
-        flash("error", "삭제하지 못했습니다. 잠시 후 다시 시도하세요.")
+    except Exception as exc:
+        flash("error", "삭제하지 못했습니다. " + reason(exc))
 
 
 # ---------- 탭 ----------
