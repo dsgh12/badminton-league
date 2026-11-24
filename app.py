@@ -1,0 +1,456 @@
+import html
+import unicodedata
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
+
+import streamlit as st
+
+import store
+
+KST = ZoneInfo("Asia/Seoul")
+
+st.set_page_config(page_title="우리 반 배드민턴 리그", layout="centered")
+
+CSS = """
+<style>
+.bn { background-color:#1b6b4f;
+  background-image: linear-gradient(rgba(255,255,255,.28),rgba(255,255,255,.28)),
+                    linear-gradient(rgba(255,255,255,.28),rgba(255,255,255,.28)),
+                    linear-gradient(90deg,rgba(255,255,255,.28),rgba(255,255,255,.28));
+  background-size:100% 2px,100% 2px,2px 100%;
+  background-position:0 14px,0 calc(100% - 14px),50% 0;
+  background-repeat:no-repeat; color:#fff; padding:26px 20px; border-radius:12px; margin-bottom:10px; }
+.bn .t { font-size:1.7rem; font-weight:800; line-height:1.2; }
+.pod { display:grid; grid-template-columns:1fr 1.15fr 1fr; gap:8px; align-items:end; margin:6px 0 20px; }
+.slot { display:flex; flex-direction:column; align-items:center; text-align:center; min-width:0; }
+.slot .nm { font-weight:700; font-size:1.05rem; overflow-wrap:anywhere; }
+.slot .sub { font-size:.8rem; opacity:.7; }
+.slot.me .nm { color:#1b8f66; }
+.slot.empty { opacity:.4; }
+.medal { width:44px; height:44px; border-radius:50%; display:grid; place-items:center; font-weight:800; font-size:1.2rem; color:#fff; margin-bottom:6px; }
+.p1 .medal { background:#d9a400; width:54px; height:54px; font-size:1.5rem; }
+.p2 .medal { background:#8a97a0; }
+.p3 .medal { background:#b5703a; }
+.blk { width:100%; margin-top:8px; border-radius:10px 10px 0 0; border:1px solid rgba(128,128,128,.3); border-bottom:0;
+  background:rgba(128,128,128,.10); display:grid; place-items:center; font-weight:800; font-size:1.6rem; opacity:.85; }
+.p1 .blk { height:96px; border-top:5px solid #d9a400; }
+.p2 .blk { height:70px; border-top:5px solid #8a97a0; }
+.p3 .blk { height:52px; border-top:5px solid #b5703a; }
+.rt { border:1px solid rgba(128,128,128,.3); border-radius:12px; overflow:hidden; }
+.rt .r { display:grid; grid-template-columns:40px minmax(0,1fr) 38px 38px 38px 54px 50px; gap:4px; align-items:center;
+  padding:10px 12px; border-bottom:1px solid rgba(128,128,128,.2); font-variant-numeric:tabular-nums; min-height:46px; }
+.rt .r:last-child { border-bottom:0; }
+.rt .h { font-size:.75rem; opacity:.65; background:rgba(128,128,128,.10); }
+.rt .r.me { background:rgba(27,143,102,.16); }
+.rt .rk { font-weight:800; font-size:1.05rem; }
+.rt .n { text-align:right; }
+.pos { color:#1b8f66; } .neg { color:#d0503a; }
+.hint { font-size:.78rem; opacity:.65; margin:8px 2px 0; }
+.stats { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin:4px 0 14px; }
+.stat { border:1px solid rgba(128,128,128,.3); border-radius:12px; padding:10px 4px; text-align:center; }
+.stat b { display:block; font-size:1.4rem; line-height:1.25; font-variant-numeric:tabular-nums; }
+.stat span { font-size:.75rem; opacity:.65; }
+.mc { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:10px; align-items:center;
+  border:1px solid rgba(128,128,128,.3); border-radius:12px; padding:10px 12px; }
+.chip { min-width:38px; text-align:center; padding:3px 8px; border-radius:999px; font-weight:700; font-size:.85rem; color:#fff; }
+.chip.w { background:#1b8f66; } .chip.l { background:#d0503a; } .chip.d { background:#1b6b4f; }
+.mc .vs { overflow-wrap:anywhere; }
+.mc .meta { font-size:.75rem; opacity:.65; }
+.mc .sc { font-weight:800; font-size:1.3rem; font-variant-numeric:tabular-nums; }
+.tag { display:inline-block; font-size:.68rem; padding:0 7px; border-radius:999px; border:1px solid rgba(128,128,128,.4); opacity:.8; margin-left:6px; }
+.empty { padding:26px 12px; text-align:center; opacity:.65; border:1px dashed rgba(128,128,128,.4); border-radius:12px; }
+</style>
+"""
+st.markdown(CSS, unsafe_allow_html=True)
+
+
+# ---------- 계산 ----------
+def esc(text):
+    return html.escape(str(text))
+
+
+def nk(name):
+    return "".join(unicodedata.normalize("NFC", str(name)).split())
+
+
+def short_date(iso):
+    try:
+        y, m, d = str(iso).split("-")
+        return f"{int(m)}/{int(d)}"
+    except ValueError:
+        return str(iso)
+
+
+def signature(a, sa, b, sb, match_date):
+    """두 선수, 날짜, 점수가 같으면 누가 기록했든 같은 서명이 나온다."""
+    (k1, s1), (k2, s2) = sorted([(a, sa), (b, sb)], key=lambda t: t[0])
+    return (k1, k2, str(match_date), s1, s2)
+
+
+def build_groups(rows, me_id=None):
+    """같은 경기를 한 묶음으로 만든다."""
+    groups, order = {}, []
+    for m in rows:
+        a, b = m["writer_id"], m["opp_id"]
+        sa, sb = int(m["my_score"]), int(m["opp_score"])
+        sig = signature(a, sa, b, sb, m["match_date"])
+        g = groups.get(sig)
+        if g is None:
+            g = {"sig": sig, "date": str(m["match_date"]), "a": a, "b": b, "sa": sa, "sb": sb,
+                 "created": m.get("created_at", ""), "records": []}
+            groups[sig] = g
+            order.append(g)
+        g["records"].append(m)
+    for g in order:
+        writers = []
+        for r in g["records"]:
+            if r["writer_id"] not in writers:
+                writers.append(r["writer_id"])
+        g["writers"] = writers
+        g["confirmed"] = len(writers) > 1
+        g["mine"] = next((r for r in g["records"] if r["writer_id"] == me_id), None) if me_id else None
+    return order
+
+
+def compute_standings(groups, names):
+    table = {}
+    for g in groups:
+        for pid, pf, pa in ((g["a"], g["sa"], g["sb"]), (g["b"], g["sb"], g["sa"])):
+            r = table.setdefault(pid, {"id": pid, "name": names.get(pid, pid), "g": 0, "w": 0, "l": 0, "pf": 0, "pa": 0})
+            r["g"] += 1
+            r["pf"] += pf
+            r["pa"] += pa
+            if pf > pa:
+                r["w"] += 1
+            else:
+                r["l"] += 1
+    rows = list(table.values())
+    for r in rows:
+        r["rate"] = r["w"] / r["g"] if r["g"] else 0
+        r["diff"] = r["pf"] - r["pa"]
+    rows.sort(key=lambda r: (-r["w"], -r["rate"], -r["diff"], -r["pf"], r["name"]))
+    rank = 0
+    for i, r in enumerate(rows):
+        p = rows[i - 1] if i else None
+        tie = p and (p["w"], p["rate"], p["diff"], p["pf"]) == (r["w"], r["rate"], r["diff"], r["pf"])
+        if not tie:
+            rank = i + 1
+        r["rank"] = rank
+    return rows
+
+
+def pct(rate):
+    return f"{round(rate * 100)}%"
+
+
+def signed(n):
+    return f"+{n}" if n > 0 else str(n)
+
+
+# ---------- 화면 조각 ----------
+def podium_html(rows, me_id):
+    slots = []
+    for idx in (1, 0, 2):
+        r = rows[idx] if idx < len(rows) else None
+        cls = f"slot p{idx + 1}" + ("" if r else " empty") + (" me" if r and r["id"] == me_id else "")
+        medal = esc(r["rank"]) if r else "–"
+        name = esc(r["name"]) if r else "대기 중"
+        sub1 = f"{r['w']}승 {r['l']}패" if r else ""
+        sub2 = f"승률 {pct(r['rate'])} · 득실 {signed(r['diff'])}" if r else ""
+        slots.append(
+            f'<div class="{cls}"><div class="medal">{medal}</div><div class="nm">{name}</div>'
+            f'<div class="sub">{sub1}</div><div class="sub">{sub2}</div><div class="blk">{idx + 1}</div></div>'
+        )
+    return f'<div class="pod">{"".join(slots)}</div>'
+
+
+def rest_table_html(rows, me_id):
+    rest = rows[3:]
+    if not rest:
+        return '<div class="empty">4위 이하 참가자는 아직 없습니다.</div>'
+    out = ['<div class="rt"><div class="r h"><span>순위</span><span>이름</span><span class="n">경기</span>'
+           '<span class="n">승</span><span class="n">패</span><span class="n">승률</span><span class="n">득실</span></div>']
+    for r in rest:
+        cls = "r me" if r["id"] == me_id else "r"
+        dcls = "pos" if r["diff"] > 0 else "neg" if r["diff"] < 0 else ""
+        out.append(
+            f'<div class="{cls}"><span class="rk">{esc(r["rank"])}</span><span>{esc(r["name"])}</span>'
+            f'<span class="n">{r["g"]}</span><span class="n">{r["w"]}</span><span class="n">{r["l"]}</span>'
+            f'<span class="n">{pct(r["rate"])}</span><span class="n {dcls}">{signed(r["diff"])}</span></div>'
+        )
+    out.append("</div>")
+    return "".join(out)
+
+
+def my_card_html(g, me_id, names):
+    mine_a = g["a"] == me_id
+    my_s, op_s = (g["sa"], g["sb"]) if mine_a else (g["sb"], g["sa"])
+    other = g["b"] if mine_a else g["a"]
+    win = my_s > op_s
+    tag = '<span class="tag">양쪽 기록 확인</span>' if g["confirmed"] else ""
+    if g["mine"]:
+        others = [names.get(w, w) for w in g["writers"] if w != me_id]
+        who = "기록: 나" + (", " + ", ".join(others) if others else "")
+        if not others:
+            who = "내가 기록"
+    else:
+        who = "기록: " + ", ".join(names.get(w, w) for w in g["writers"])
+    return (
+        f'<div class="mc"><span class="chip {"w" if win else "l"}">{"승" if win else "패"}</span>'
+        f'<div class="vs"><b>vs {esc(names.get(other, other))}</b>{tag}'
+        f'<div class="meta">{esc(short_date(g["date"]))} · {esc(who)}</div></div>'
+        f'<div class="sc">{my_s} : {op_s}</div></div>'
+    )
+
+
+def all_card_html(g, names):
+    a_win = g["sa"] > g["sb"]
+    w, l = (g["a"], g["b"]) if a_win else (g["b"], g["a"])
+    tag = '<span class="tag">양쪽 기록 확인</span>' if g["confirmed"] else ""
+    who = "기록: " + ", ".join(names.get(x, x) for x in g["writers"])
+    return (
+        f'<div class="mc"><span class="chip d">{esc(short_date(g["date"]))}</span>'
+        f'<div class="vs"><b>{esc(names.get(w, w))}</b> 승 · {esc(names.get(l, l))} 패{tag}'
+        f'<div class="meta">{esc(who)}</div></div>'
+        f'<div class="sc">{max(g["sa"], g["sb"])} : {min(g["sa"], g["sb"])}</div></div>'
+    )
+
+
+# ---------- 저장소 ----------
+try:
+    ROSTER = store.roster()
+except Exception:
+    st.markdown('<div class="bn"><div class="t">우리 반 배드민턴 리그</div></div>', unsafe_allow_html=True)
+    st.error("명단을 불러오지 못했습니다. Streamlit의 Secrets에 roster 항목이 있는지 확인하세요.")
+    st.stop()
+
+NAMES = {r["id"]: r["name"] for r in ROSTER}
+
+
+def load_matches():
+    try:
+        return store.matches()
+    except Exception:
+        st.warning("기록을 불러오지 못했습니다. 잠시 후 새로고침하세요. 계속되면 Secrets의 GITHUB_TOKEN과 저장소 이름을 확인하세요.")
+        return []
+
+
+def today():
+    return datetime.now(KST).date()
+
+
+# ---------- 로그인 ----------
+def find_member(student_id, name):
+    sid = str(student_id).strip()
+    for r in ROSTER:
+        if r["id"] == sid and nk(r["name"]) == nk(name):
+            return r
+    return None
+
+
+if "me" not in st.session_state:
+    qp = st.query_params
+    if qp.get("id") and qp.get("name"):
+        member = find_member(qp.get("id"), qp.get("name"))
+        if member:
+            st.session_state.me = {"id": member["id"], "name": member["name"]}
+
+st.markdown('<div class="bn"><div class="t">우리 반 배드민턴 리그</div></div>', unsafe_allow_html=True)
+
+if "me" not in st.session_state:
+    with st.form("login"):
+        st.subheader("학번과 이름으로 입장")
+        st.caption("반 명단에 있는 학번과 이름으로만 입장할 수 있습니다.")
+        sid_in = st.text_input("학번", placeholder="예: 21204", max_chars=12)
+        name_in = st.text_input("이름", placeholder="예: 김나은", max_chars=20)
+        submitted = st.form_submit_button("입장하기", type="primary")
+    if submitted:
+        member = find_member(sid_in, name_in)
+        if member:
+            st.session_state.me = {"id": member["id"], "name": member["name"]}
+            st.query_params["id"] = member["id"]
+            st.query_params["name"] = member["name"]
+            st.rerun()
+        else:
+            st.error("명단에 없는 학번 또는 이름입니다. 학번과 이름을 다시 확인하세요.")
+    st.stop()
+
+ME = st.session_state.me
+
+
+def logout():
+    for k in ("me", "editing", "armed", "flash", "f_date", "f_opp", "f_my", "f_op"):
+        st.session_state.pop(k, None)
+    st.query_params.clear()
+
+
+c1, c2 = st.columns([4, 1], vertical_alignment="center")
+c1.markdown(f"**{esc(ME['name'])}** · 학번 {esc(ME['id'])}")
+c2.button("로그아웃", on_click=logout)
+
+# ---------- 기록 입력 ----------
+st.session_state.setdefault("f_date", today())
+st.session_state.setdefault("f_opp", None)
+st.session_state.setdefault("f_my", None)
+st.session_state.setdefault("f_op", None)
+st.session_state.setdefault("editing", None)
+st.session_state.setdefault("armed", None)
+
+
+def reset_form():
+    st.session_state.f_date = today()
+    st.session_state.f_opp = None
+    st.session_state.f_my = None
+    st.session_state.f_op = None
+    st.session_state.editing = None
+
+
+def flash(kind, text):
+    st.session_state.flash = (kind, text)
+
+
+def submit_match():
+    s = st.session_state
+    d, opp, my, op = s.f_date, s.f_opp, s.f_my, s.f_op
+    if not d or not opp or my is None or op is None:
+        return flash("error", "모든 항목을 입력하세요.")
+    my, op = int(my), int(op)
+    if not (0 <= my <= 99 and 0 <= op <= 99):
+        return flash("error", "점수는 0 이상 99 이하의 정수로 입력하세요.")
+    if my == op:
+        return flash("error", "배드민턴은 무승부가 없습니다. 점수를 확인하세요.")
+    if opp == ME["id"] or opp not in NAMES:
+        return flash("error", "상대는 본인이 아닌 명단의 다른 사람이어야 합니다.")
+
+    editing = s.editing
+    try:
+        rows = [r for r in store.matches() if r["id"] != editing]
+    except Exception:
+        return flash("error", "기록을 불러오지 못했습니다. 잠시 후 다시 시도하세요.")
+    sig = signature(ME["id"], my, opp, op, d.isoformat())
+    same = [r for r in rows if signature(r["writer_id"], int(r["my_score"]), r["opp_id"], int(r["opp_score"]), r["match_date"]) == sig]
+    if any(r["writer_id"] == ME["id"] for r in same):
+        return flash("error", "이미 같은 경기를 기록했습니다. 목록에서 확인하세요.")
+    note = " 상대가 기록한 같은 경기와 한 경기로 합쳐졌습니다." if same else ""
+
+    row = {"writer_id": ME["id"], "opp_id": opp, "match_date": d.isoformat(), "my_score": my, "opp_score": op}
+    try:
+        if editing:
+            if not store.update_match(editing, ME["id"], row):
+                return flash("error", "수정하지 못했습니다. 이미 삭제된 기록일 수 있습니다.")
+            flash("success", "경기 기록을 수정했습니다." + note)
+        else:
+            store.add_match(row)
+            flash("success", "경기 기록을 추가했습니다." + note)
+    except Exception:
+        return flash("error", "저장에 실패했습니다. 잠시 후 다시 시도하세요.")
+    reset_form()
+
+
+def start_edit(rec):
+    s = st.session_state
+    s.f_date = date.fromisoformat(str(rec["match_date"]))
+    s.f_opp = rec["opp_id"]
+    s.f_my = int(rec["my_score"])
+    s.f_op = int(rec["opp_score"])
+    s.editing = rec["id"]
+    s.armed = None
+
+
+def cancel_edit():
+    reset_form()
+
+
+def delete_record(rec):
+    s = st.session_state
+    if s.armed != rec["id"]:
+        s.armed = rec["id"]
+        return
+    s.armed = None
+    try:
+        if store.delete_match(rec["id"], ME["id"]):
+            if s.editing == rec["id"]:
+                reset_form()
+            flash("success", "경기 기록을 삭제했습니다.")
+        else:
+            flash("error", "삭제하지 못했습니다. 이미 지워진 기록이거나 내가 쓴 기록이 아닙니다.")
+    except Exception:
+        flash("error", "삭제하지 못했습니다. 잠시 후 다시 시도하세요.")
+
+
+# ---------- 탭 ----------
+tab_rank, tab_mine, tab_all = st.tabs(["순위", "내 기록", "전체 경기"])
+
+
+@st.fragment(run_every=15)
+def rank_view():
+    groups = build_groups(load_matches())
+    rows = compute_standings(groups, NAMES)
+    st.markdown(podium_html(rows, ME["id"]), unsafe_allow_html=True)
+    if not rows:
+        st.markdown('<div class="empty">아직 등록된 경기가 없습니다. 내 기록 탭에서 첫 경기를 기록해 보세요.</div>', unsafe_allow_html=True)
+    else:
+        st.markdown(rest_table_html(rows, ME["id"]), unsafe_allow_html=True)
+    st.markdown('<div class="hint">정렬 기준: 승수, 승률, 득실차, 총득점 순. 양쪽이 모두 기록해도 날짜, 상대, 점수가 같으면 한 경기로 계산됩니다. 15초마다 자동으로 갱신됩니다.</div>', unsafe_allow_html=True)
+
+
+@st.fragment(run_every=15)
+def all_view():
+    groups = build_groups(load_matches())
+    groups.sort(key=lambda g: (g["date"], str(g["created"])), reverse=True)
+    if not groups:
+        st.markdown('<div class="empty">아직 등록된 경기가 없습니다.</div>', unsafe_allow_html=True)
+    for g in groups:
+        st.markdown(all_card_html(g, NAMES), unsafe_allow_html=True)
+
+
+with tab_rank:
+    rank_view()
+
+with tab_mine:
+    all_groups = build_groups(load_matches(), ME["id"])
+    standings = compute_standings(all_groups, NAMES)
+    me_row = next((r for r in standings if r["id"] == ME["id"]), None)
+    if me_row:
+        vals = [(f"{me_row['rank']}위", "순위"), (f"{me_row['w']}승 {me_row['l']}패", "전적"), (pct(me_row["rate"]), "승률"),
+                (str(me_row["pf"]), "총득점"), (str(me_row["pa"]), "총실점"), (signed(me_row["diff"]), "득실차")]
+    else:
+        vals = [("–", "순위"), ("0승 0패", "전적"), ("–", "승률"), ("0", "총득점"), ("0", "총실점"), ("–", "득실차")]
+    st.markdown('<div class="stats">' + "".join(f"<div class='stat'><b>{esc(v)}</b><span>{esc(k)}</span></div>" for v, k in vals) + "</div>", unsafe_allow_html=True)
+
+    fl = st.session_state.pop("flash", None)
+    if fl:
+        (st.success if fl[0] == "success" else st.error)(fl[1])
+
+    editing = st.session_state.editing
+    with st.form("match_form", border=True):
+        st.subheader("경기 기록 수정" if editing else "경기 결과 기록")
+        st.date_input("경기 날짜", key="f_date")
+        options = [r["id"] for r in ROSTER if r["id"] != ME["id"]]
+        st.selectbox("상대 선택", options, index=None, key="f_opp", placeholder="상대를 선택하세요",
+                     format_func=lambda i: f"{NAMES[i]}({i})")
+        s1, s2 = st.columns(2)
+        s1.number_input("내 점수", min_value=0, max_value=99, step=1, value=None, key="f_my", placeholder="0")
+        s2.number_input("상대 점수", min_value=0, max_value=99, step=1, value=None, key="f_op", placeholder="0")
+        st.form_submit_button("수정 저장" if editing else "기록 추가", type="primary", on_click=submit_match)
+    if editing:
+        st.button("수정 취소", on_click=cancel_edit)
+
+    st.subheader("내 경기 기록")
+    mine = [g for g in all_groups if ME["id"] in (g["a"], g["b"])]
+    mine.sort(key=lambda g: (g["date"], str(g["created"])), reverse=True)
+    if not mine:
+        st.markdown('<div class="empty">아직 기록한 경기가 없습니다.</div>', unsafe_allow_html=True)
+    for g in mine:
+        st.markdown(my_card_html(g, ME["id"], NAMES), unsafe_allow_html=True)
+        rec = g["mine"]
+        if rec:
+            b1, b2, _ = st.columns([1, 1, 3])
+            b1.button("수정 중" if editing == rec["id"] else "수정", key=f"e_{rec['id']}", on_click=start_edit, args=(rec,))
+            armed = st.session_state.armed == rec["id"]
+            b2.button("정말 삭제" if armed else "삭제", key=f"d_{rec['id']}", on_click=delete_record, args=(rec,),
+                      type="primary" if armed else "secondary")
+    st.button("새로고침", on_click=store.matches.clear)
+
+with tab_all:
+    all_view()
