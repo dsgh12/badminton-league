@@ -261,8 +261,8 @@ if "me" not in st.session_state:
     with st.form("login"):
         st.subheader("학번과 이름으로 입장")
         st.caption("반 명단에 있는 학번과 이름으로만 입장할 수 있습니다.")
-        sid_in = st.text_input("학번", placeholder="예: 21204", max_chars=12)
-        name_in = st.text_input("이름", placeholder="예: 김나은", max_chars=20)
+        sid_in = st.text_input("학번", placeholder="예: 21218", max_chars=12)
+        name_in = st.text_input("이름", placeholder="예: 홍길동", max_chars=20)
         submitted = st.form_submit_button("입장하기", type="primary")
     if submitted:
         member = find_member(sid_in, name_in)
