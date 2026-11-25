@@ -440,7 +440,7 @@ if "me" not in st.session_state:
     elif not st.session_state.get("no_auto"):
         restore_from_browser()
     with st.form("login"):
-        st.subheader("학번과 이름으로 입장")
+        st.subheader("로그인")
         st.caption("반 명단에 있는 학번과 이름으로만 입장할 수 있습니다.")
         sid_in = st.text_input("학번", placeholder="예: 21218", max_chars=12)
         name_in = st.text_input("이름", placeholder="예: 홍길동", max_chars=20)
