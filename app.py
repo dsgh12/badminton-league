@@ -355,7 +355,7 @@ def admin_page():
         for g in games:
             wins += g["경기 결과"] == "승"
             losses += g["경기 결과"] == "패"
-            table.append({"학번": m["id"], "이름": m["name"], "경기 날짜": g["경기 날짜"],
+            table.append({"학번": m["id"], "이름": m["name"], "경기 날짜": short_date(g["경기 날짜"]),
                           "점수": g["점수"], "경기 결과": g["경기 결과"]})
     df = pd.DataFrame(table)
     st.markdown(f"#### {esc(NAMES[pick])} ({esc(pick)})", unsafe_allow_html=True)
@@ -364,16 +364,6 @@ def admin_page():
     st.download_button(f"{NAMES[pick]} 기록 내려받기(CSV)", csv_bytes(df),
                        f"badminton_{pick}_{NAMES[pick]}.csv", "text/csv", key=f"dl_{pick}")
 
-    with st.expander("원본 기록(기록한 사람 기준)"):
-        raw = sorted(rows, key=lambda r: str(r.get("created_at", "")), reverse=True)
-        raw_df = pd.DataFrame([{
-            "기록 시각": kst_text(r.get("created_at", "")),
-            "기록한 사람": f"{NAMES.get(r['writer_id'], r['writer_id'])}({r['writer_id']})",
-            "상대": f"{NAMES.get(r['opp_id'], r['opp_id'])}({r['opp_id']})",
-            "기록자 기준 점수": f"{r['my_score']} : {r['opp_score']}",
-            "경기 날짜": r["match_date"],
-        } for r in raw], columns=["기록 시각", "기록한 사람", "상대", "기록자 기준 점수", "경기 날짜"])
-        st.dataframe(raw_df, hide_index=True)
     st.button("새로고침", on_click=store.matches.clear, key="admin_refresh")
 
 
