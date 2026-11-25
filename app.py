@@ -305,6 +305,27 @@ def admin_logout():
     st.session_state.pop("admin", None)
 
 
+def student_rows(groups, sid):
+    """한 학생의 경기 목록(날짜 최신순). 같은 경기를 양쪽이 기록했어도 한 줄로 나온다."""
+    mine = [g for g in groups if sid in (g["a"], g["b"])]
+    mine.sort(key=lambda g: (g["date"], str(g["created"])), reverse=True)
+    rows = []
+    for g in mine:
+        is_a = g["a"] == sid
+        my_s, op_s = (g["sa"], g["sb"]) if is_a else (g["sb"], g["sa"])
+        other = g["b"] if is_a else g["a"]
+        rows.append({
+            "학번": sid, "이름": NAMES.get(sid, sid),
+            "경기 날짜": g["date"], "상대": f"{NAMES.get(other, other)}({other})",
+            "점수": f"{my_s} : {op_s}", "경기 결과": "승" if my_s > op_s else "패",
+        })
+    return rows
+
+
+def csv_bytes(df):
+    return df.to_csv(index=False).encode("utf-8-sig")  # 엑셀에서 한글이 깨지지 않게
+
+
 def admin_page():
     rows = load_matches()
     groups = build_groups(rows)
@@ -314,56 +335,55 @@ def admin_page():
     h1, h2 = st.columns([3, 2], vertical_alignment="center")
     h1.subheader("관리자 모드")
     h2.button("관리자 로그아웃", on_click=admin_logout, key="admin_out")
+
+    ids = [m["id"] for m in ROSTER]
+    ALL = "전체 학생"
+    pick = st.selectbox("학생 선택", [ALL] + ids, key="admin_student",
+                        format_func=lambda i: i if i == ALL else f"{i}  {NAMES[i]}")
     st.caption(f"전체 {len(groups)}경기, 원본 기록 {len(rows)}건")
 
-    st.markdown("#### 학생별 요약")
-    summary = []
-    for m in ROSTER:
-        r = by_id.get(m["id"])
-        summary.append({
-            "순위": str(r["rank"]) if r else "-", "학번": m["id"], "이름": m["name"],
-            "경기": r["g"] if r else 0, "승": r["w"] if r else 0, "패": r["l"] if r else 0,
-            "승률": pct(r["rate"]) if r else "-", "총득점": r["pf"] if r else 0,
-            "총실점": r["pa"] if r else 0, "득실차": r["diff"] if r else 0,
-        })
-    st.dataframe(pd.DataFrame(summary), hide_index=True)
+    if pick == ALL:
+        summary = []
+        for m in ROSTER:
+            r = by_id.get(m["id"])
+            summary.append({
+                "순위": str(r["rank"]) if r else "-", "학번": m["id"], "이름": m["name"],
+                "경기": r["g"] if r else 0, "승": r["w"] if r else 0, "패": r["l"] if r else 0,
+                "승률": pct(r["rate"]) if r else "-", "총득점": r["pf"] if r else 0,
+                "총실점": r["pa"] if r else 0, "득실차": r["diff"] if r else 0,
+            })
+        st.dataframe(pd.DataFrame(summary), hide_index=True)
+        every = [row for sid in ids for row in reversed(student_rows(groups, sid))]
+        st.markdown("#### 학생별 경기 기록")
+        if every:
+            df_all = pd.DataFrame(every)
+            st.dataframe(df_all, hide_index=True)
+            st.download_button("전체 기록 내려받기(CSV)", csv_bytes(df_all), "badminton_all.csv", "text/csv", key="dl_all")
+        else:
+            st.markdown('<div class="empty">아직 등록된 경기가 없습니다.</div>', unsafe_allow_html=True)
+    else:
+        r = by_id.get(pick)
+        st.markdown(f"#### {esc(NAMES[pick])} ({esc(pick)})", unsafe_allow_html=True)
+        st.caption((f"{r['g']}경기 {r['w']}승 {r['l']}패 · 총득점 {r['pf']} · 총실점 {r['pa']} · 순위 {r['rank']}위(승수 기준)") if r else "아직 기록이 없습니다.")
+        mine = student_rows(groups, pick)
+        if mine:
+            df = pd.DataFrame(mine)[["학번", "이름", "경기 날짜", "상대", "점수", "경기 결과"]]
+            st.dataframe(df, hide_index=True)
+            st.download_button(f"{NAMES[pick]} 기록 내려받기(CSV)", csv_bytes(df),
+                               f"badminton_{pick}_{NAMES[pick]}.csv", "text/csv", key=f"dl_{pick}")
+        else:
+            st.markdown('<div class="empty">이 학생의 기록이 없습니다.</div>', unsafe_allow_html=True)
 
-    st.markdown("#### 학생별 기록")
-    for m in ROSTER:
-        mine = [g for g in groups if m["id"] in (g["a"], g["b"])]
-        mine.sort(key=lambda g: (g["date"], str(g["created"])), reverse=True)
-        r = by_id.get(m["id"])
-        title = f"{m['name']}({m['id']})  ·  " + (f"{r['g']}경기 {r['w']}승 {r['l']}패, 총득점 {r['pf']}" if r else "기록 없음")
-        with st.expander(title):
-            if not mine:
-                st.caption("기록이 없습니다.")
-                continue
-            table = []
-            for g in mine:
-                is_a = g["a"] == m["id"]
-                my_s, op_s = (g["sa"], g["sb"]) if is_a else (g["sb"], g["sa"])
-                other = g["b"] if is_a else g["a"]
-                table.append({
-                    "경기 날짜": g["date"], "상대": f"{NAMES.get(other, other)}({other})",
-                    "점수": f"{my_s} : {op_s}", "결과": "승" if my_s > op_s else "패",
-                    "기록한 사람": ", ".join(NAMES.get(w, w) for w in g["writers"]),
-                    "확인": "양쪽 기록" if g["confirmed"] else "한쪽 기록",
-                })
-            st.dataframe(pd.DataFrame(table), hide_index=True)
-
-    st.markdown("#### 원본 기록 전체")
-    raw = sorted(rows, key=lambda r: str(r.get("created_at", "")), reverse=True)
-    raw_df = pd.DataFrame([{
-        "기록 시각": kst_text(r.get("created_at", "")),
-        "기록한 사람": f"{NAMES.get(r['writer_id'], r['writer_id'])}({r['writer_id']})",
-        "상대": f"{NAMES.get(r['opp_id'], r['opp_id'])}({r['opp_id']})",
-        "기록자 기준 점수": f"{r['my_score']} : {r['opp_score']}",
-        "경기 날짜": r["match_date"],
-    } for r in raw])
-    st.dataframe(raw_df, hide_index=True)
-    if len(raw_df):
-        st.download_button("기록 CSV 내려받기", raw_df.to_csv(index=False).encode("utf-8-sig"),
-                           "badminton_records.csv", "text/csv", key="admin_csv")
+    with st.expander("원본 기록(기록한 사람 기준)"):
+        raw = sorted(rows, key=lambda r: str(r.get("created_at", "")), reverse=True)
+        raw_df = pd.DataFrame([{
+            "기록 시각": kst_text(r.get("created_at", "")),
+            "기록한 사람": f"{NAMES.get(r['writer_id'], r['writer_id'])}({r['writer_id']})",
+            "상대": f"{NAMES.get(r['opp_id'], r['opp_id'])}({r['opp_id']})",
+            "기록자 기준 점수": f"{r['my_score']} : {r['opp_score']}",
+            "경기 날짜": r["match_date"],
+        } for r in raw], columns=["기록 시각", "기록한 사람", "상대", "기록자 기준 점수", "경기 날짜"])
+        st.dataframe(raw_df, hide_index=True)
     st.button("새로고침", on_click=store.matches.clear, key="admin_refresh")
 
 
