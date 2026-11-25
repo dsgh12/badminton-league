@@ -361,7 +361,7 @@ def admin_page():
                           "점수": g["점수"], "경기 결과": g["경기 결과"]})
     df = pd.DataFrame(table)
     st.markdown(f"#### {esc(NAMES[pick])} ({esc(pick)})", unsafe_allow_html=True)
-    st.dataframe(df, hide_index=True, height=min(38 * (len(df) + 1) + 3, 700))
+    st.dataframe(df, hide_index=True, height=35 * (len(df) + 1) + 3)
     st.markdown(f"**총 {wins}승 {losses}패**")
     st.download_button(f"{NAMES[pick]} 기록 내려받기(CSV)", csv_bytes(df),
                        f"badminton_{pick}_{NAMES[pick]}.csv", "text/csv", key=f"dl_{pick}")
