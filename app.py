@@ -2,10 +2,12 @@ import hmac
 import html
 import unicodedata
 from datetime import date, datetime
+from urllib.parse import quote, unquote
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 import store
 
@@ -376,10 +378,41 @@ def find_member(student_id, name):
     return None
 
 
-if "me" not in st.session_state:
+COOKIE = "bl_user"
+
+
+def saved_login():
+    """주소의 ?id=&name= 또는 이 기기에 저장된 쿠키에서 이전 로그인 정보를 찾는다."""
     qp = st.query_params
     if qp.get("id") and qp.get("name"):
-        member = find_member(qp.get("id"), qp.get("name"))
+        return qp.get("id"), qp.get("name")
+    try:
+        raw = unquote(st.context.cookies.get(COOKIE, ""))
+    except Exception:
+        return None
+    if "|" in raw:
+        sid, name = raw.split("|", 1)
+        return sid, name
+    return None
+
+
+def browser_cookie(value):
+    """이 기기의 브라우저에 로그인 정보를 저장(value가 None이면 삭제)한다."""
+    if value is None:
+        js = f'document.cookie="{COOKIE}=; max-age=0; path=/; SameSite=Lax";'
+    else:
+        js = (f'document.cookie="{COOKIE}={quote(value)}; max-age=15552000; path=/; SameSite=Lax; Secure";')
+    page = f"<script>try{{var d=window.parent.document;{js.replace('document.', 'd.')}}}catch(e){{}}</script>"
+    if hasattr(st, "iframe"):  # components.html은 최신 Streamlit에서 사라진다
+        st.iframe(page, height=1)
+    else:
+        components.html(page, height=0)
+
+
+if "me" not in st.session_state and not st.session_state.get("no_auto"):
+    found = saved_login()
+    if found:
+        member = find_member(*found)
         if member:
             st.session_state.me = {"id": member["id"], "name": member["name"]}
 
@@ -389,6 +422,8 @@ if "me" not in st.session_state:
     if st.session_state.get("admin"):
         admin_page()
         st.stop()
+    if st.session_state.pop("clear_cookie", False):
+        browser_cookie(None)
     with st.form("login"):
         st.subheader("학번과 이름으로 입장")
         st.caption("반 명단에 있는 학번과 이름으로만 입장할 수 있습니다.")
@@ -399,6 +434,8 @@ if "me" not in st.session_state:
         member = find_member(sid_in, name_in)
         if member:
             st.session_state.me = {"id": member["id"], "name": member["name"]}
+            st.session_state.pop("no_auto", None)
+            st.session_state.save_cookie = True
             st.query_params["id"] = member["id"]
             st.query_params["name"] = member["name"]
             st.rerun()
@@ -409,11 +446,17 @@ if "me" not in st.session_state:
     st.stop()
 
 ME = st.session_state.me
+if not st.session_state.get("cookie_saved"):
+    browser_cookie(f"{ME['id']}|{ME['name']}")
+    st.session_state.cookie_saved = True
+st.session_state.pop("save_cookie", None)
 
 
 def logout():
-    for k in ("me", "editing", "armed", "flash", "f_date", "f_opp", "f_my", "f_op"):
+    for k in ("me", "cookie_saved", "editing", "armed", "flash", "f_date", "f_opp", "f_my", "f_op"):
         st.session_state.pop(k, None)
+    st.session_state.no_auto = True
+    st.session_state.clear_cookie = True
     st.query_params.clear()
 
 
