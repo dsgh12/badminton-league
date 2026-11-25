@@ -352,12 +352,12 @@ def admin_page():
     for m in ROSTER:
         games = played.get(m["id"], []) if m["id"] != pick else []
         if not games:
-            table.append({"학번": m["id"], "이름": m["name"], "경기 날짜": "", "점수": "", "경기 결과": ""})
+            table.append({"상대 선수": f'{m["id"]} {m["name"]}', "경기 날짜": "", "점수": "", "경기 결과": ""})
             continue
         for g in games:
             wins += g["경기 결과"] == "승"
             losses += g["경기 결과"] == "패"
-            table.append({"학번": m["id"], "이름": m["name"], "경기 날짜": short_date(g["경기 날짜"]),
+            table.append({"상대 선수": f'{m["id"]} {m["name"]}', "경기 날짜": short_date(g["경기 날짜"]),
                           "점수": g["점수"], "경기 결과": g["경기 결과"]})
     df = pd.DataFrame(table)
     st.markdown(f"#### {esc(NAMES[pick])} ({esc(pick)})", unsafe_allow_html=True)
