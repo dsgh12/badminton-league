@@ -466,9 +466,19 @@ if not st.session_state.get("cookie_saved"):
     st.session_state.cookie_saved = True
 st.session_state.pop("save_cookie", None)
 
+if not st.session_state.get("kb_off"):
+    # 선택 상자를 누를 때 모바일 키보드가 올라오지 않게 하고 목록만 보여 준다
+    run_js(
+        'var w=window.parent;if(!w.__noKb){w.__noKb=true;'
+        'var fix=function(){w.document.querySelectorAll(\'[data-baseweb="select"] input\').forEach(function(e){'
+        'if(e.getAttribute("inputmode")!=="none"){e.setAttribute("inputmode","none");e.setAttribute("readonly","readonly");}});};'
+        'fix();new w.MutationObserver(fix).observe(w.document.body,{childList:true,subtree:true});}'
+    )
+    st.session_state.kb_off = True
+
 
 def logout():
-    for k in ("me", "cookie_saved", "editing", "armed", "flash", "f_date", "f_opp", "f_my", "f_op"):
+    for k in ("me", "cookie_saved", "kb_off", "editing", "armed", "flash", "f_date", "f_opp", "f_my", "f_op"):
         st.session_state.pop(k, None)
     st.session_state.no_auto = True
     st.session_state.clear_cookie = True
