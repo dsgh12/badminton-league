@@ -396,17 +396,30 @@ def saved_login():
     return None
 
 
-def browser_cookie(value):
-    """이 기기의 브라우저에 로그인 정보를 저장(value가 None이면 삭제)한다."""
-    if value is None:
-        js = f'document.cookie="{COOKIE}=; max-age=0; path=/; SameSite=Lax";'
-    else:
-        js = (f'document.cookie="{COOKIE}={quote(value)}; max-age=15552000; path=/; SameSite=Lax; Secure";')
-    page = f"<script>try{{var d=window.parent.document;{js.replace('document.', 'd.')}}}catch(e){{}}</script>"
+def run_js(code):
+    page = f"<script>try{{{code}}}catch(e){{}}</script>"
     if hasattr(st, "iframe"):  # components.html은 최신 Streamlit에서 사라진다
         st.iframe(page, height=1)
     else:
         components.html(page, height=0)
+
+
+def browser_cookie(value):
+    """이 기기의 브라우저에 로그인 정보를 저장(value가 None이면 삭제)한다. 쿠키와 localStorage에 함께 둔다."""
+    if value is None:
+        run_js(f'var w=window.parent;w.document.cookie="{COOKIE}=; max-age=0; path=/; SameSite=Lax";'
+               f'w.localStorage.removeItem("{COOKIE}");')
+    else:
+        v = value.replace("\\", "\\\\").replace('"', '\\"')
+        run_js(f'var w=window.parent;w.document.cookie="{COOKIE}={quote(value)}; max-age=15552000; path=/; SameSite=Lax; Secure";'
+               f'w.localStorage.setItem("{COOKIE}","{v}");')
+
+
+def restore_from_browser():
+    """저장된 정보가 있으면 주소에 ?id=&name=을 붙여 다시 열어, 기존 주소 로그인으로 입장시킨다."""
+    run_js(f'var w=window.parent;var v=w.localStorage.getItem("{COOKIE}");var u=new URL(w.location.href);'
+           'if(v&&v.indexOf("|")>0&&!u.searchParams.get("id")){var i=v.indexOf("|");'
+           'u.searchParams.set("id",v.slice(0,i));u.searchParams.set("name",v.slice(i+1));w.location.replace(u.toString());}')
 
 
 if "me" not in st.session_state and not st.session_state.get("no_auto"):
@@ -424,6 +437,8 @@ if "me" not in st.session_state:
         st.stop()
     if st.session_state.pop("clear_cookie", False):
         browser_cookie(None)
+    elif not st.session_state.get("no_auto"):
+        restore_from_browser()
     with st.form("login"):
         st.subheader("학번과 이름으로 입장")
         st.caption("반 명단에 있는 학번과 이름으로만 입장할 수 있습니다.")
