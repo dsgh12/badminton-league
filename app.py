@@ -1,8 +1,10 @@
+import hmac
 import html
 import unicodedata
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
+import pandas as pd
 import streamlit as st
 
 import store
@@ -255,6 +257,116 @@ def today():
     return datetime.now(KST).date()
 
 
+# ---------- 관리자 ----------
+def kst_text(iso):
+    try:
+        return datetime.fromisoformat(str(iso)).astimezone(KST).strftime("%m/%d %H:%M")
+    except ValueError:
+        return str(iso)
+
+
+def check_admin_password(typed):
+    """맞으면 True, 틀리면 False, 비밀번호가 설정되지 않았으면 None."""
+    try:
+        expected = st.secrets.get("ADMIN_PASSWORD")
+    except (KeyError, FileNotFoundError):
+        expected = None
+    if not expected:
+        return None
+    return hmac.compare_digest(str(typed).encode("utf-8"), str(expected).encode("utf-8"))
+
+
+def admin_gate(key):
+    """관리자 비밀번호 입력 칸. 이미 열려 있으면 True."""
+    if st.session_state.get("admin"):
+        return True
+    tries = st.session_state.get("admin_fail", 0)
+    with st.form(key):
+        typed = st.text_input("관리자 비밀번호", type="password")
+        pressed = st.form_submit_button("관리자 모드 열기")
+    if pressed:
+        if tries >= 5:
+            st.error("비밀번호를 여러 번 틀렸습니다. 잠시 뒤 다시 시도하세요.")
+        else:
+            ok = check_admin_password(typed)
+            if ok is None:
+                st.error("관리자 비밀번호가 설정되지 않았습니다. Streamlit Secrets에 ADMIN_PASSWORD를 추가하세요.")
+            elif ok:
+                st.session_state.admin = True
+                st.session_state.admin_fail = 0
+                st.rerun()
+            else:
+                st.session_state.admin_fail = tries + 1
+                st.error("비밀번호가 맞지 않습니다.")
+    return False
+
+
+def admin_logout():
+    st.session_state.pop("admin", None)
+
+
+def admin_page():
+    rows = load_matches()
+    groups = build_groups(rows)
+    standings = compute_standings(groups, NAMES)
+    by_id = {r["id"]: r for r in standings}
+
+    h1, h2 = st.columns([3, 2], vertical_alignment="center")
+    h1.subheader("관리자 모드")
+    h2.button("관리자 로그아웃", on_click=admin_logout, key="admin_out")
+    st.caption(f"전체 {len(groups)}경기, 원본 기록 {len(rows)}건")
+
+    st.markdown("#### 학생별 요약")
+    summary = []
+    for m in ROSTER:
+        r = by_id.get(m["id"])
+        summary.append({
+            "순위": str(r["rank"]) if r else "-", "학번": m["id"], "이름": m["name"],
+            "경기": r["g"] if r else 0, "승": r["w"] if r else 0, "패": r["l"] if r else 0,
+            "승률": pct(r["rate"]) if r else "-", "총득점": r["pf"] if r else 0,
+            "총실점": r["pa"] if r else 0, "득실차": r["diff"] if r else 0,
+        })
+    st.dataframe(pd.DataFrame(summary), hide_index=True)
+
+    st.markdown("#### 학생별 기록")
+    for m in ROSTER:
+        mine = [g for g in groups if m["id"] in (g["a"], g["b"])]
+        mine.sort(key=lambda g: (g["date"], str(g["created"])), reverse=True)
+        r = by_id.get(m["id"])
+        title = f"{m['name']}({m['id']})  ·  " + (f"{r['g']}경기 {r['w']}승 {r['l']}패, 총득점 {r['pf']}" if r else "기록 없음")
+        with st.expander(title):
+            if not mine:
+                st.caption("기록이 없습니다.")
+                continue
+            table = []
+            for g in mine:
+                is_a = g["a"] == m["id"]
+                my_s, op_s = (g["sa"], g["sb"]) if is_a else (g["sb"], g["sa"])
+                other = g["b"] if is_a else g["a"]
+                table.append({
+                    "경기 날짜": g["date"], "상대": f"{NAMES.get(other, other)}({other})",
+                    "점수": f"{my_s} : {op_s}", "결과": "승" if my_s > op_s else "패",
+                    "기록한 사람": ", ".join(NAMES.get(w, w) for w in g["writers"]),
+                    "확인": "양쪽 기록" if g["confirmed"] else "한쪽 기록",
+                })
+            st.dataframe(pd.DataFrame(table), hide_index=True)
+
+    st.markdown("#### 원본 기록 전체")
+    raw = sorted(rows, key=lambda r: str(r.get("created_at", "")), reverse=True)
+    raw_df = pd.DataFrame([{
+        "기록 시각": kst_text(r.get("created_at", "")),
+        "기록한 사람": f"{NAMES.get(r['writer_id'], r['writer_id'])}({r['writer_id']})",
+        "상대": f"{NAMES.get(r['opp_id'], r['opp_id'])}({r['opp_id']})",
+        "기록자 기준 점수": f"{r['my_score']} : {r['opp_score']}",
+        "경기 날짜": r["match_date"],
+    } for r in raw])
+    st.dataframe(raw_df, hide_index=True)
+    if len(raw_df):
+        st.download_button("기록 CSV 내려받기", raw_df.to_csv(index=False).encode("utf-8-sig"),
+                           "badminton_records.csv", "text/csv", key="admin_csv")
+    st.button("새로고침", on_click=store.matches.clear, key="admin_refresh")
+
+
 # ---------- 로그인 ----------
 def find_member(student_id, name):
     sid = str(student_id).strip()
@@ -274,6 +386,9 @@ if "me" not in st.session_state:
 st.markdown('<div class="bn"><div class="t">우리 반 배드민턴 리그</div></div>', unsafe_allow_html=True)
 
 if "me" not in st.session_state:
+    if st.session_state.get("admin"):
+        admin_page()
+        st.stop()
     with st.form("login"):
         st.subheader("학번과 이름으로 입장")
         st.caption("반 명단에 있는 학번과 이름으로만 입장할 수 있습니다.")
@@ -289,6 +404,8 @@ if "me" not in st.session_state:
             st.rerun()
         else:
             st.error("명단에 없는 학번 또는 이름입니다. 학번과 이름을 다시 확인하세요.")
+    with st.expander("관리자 로그인"):
+        admin_gate("admin_gate_login")
     st.stop()
 
 ME = st.session_state.me
@@ -395,7 +512,7 @@ def delete_record(rec):
 
 
 # ---------- 탭 ----------
-tab_rank, tab_mine, tab_all = st.tabs(["순위", "내 기록", "전체 경기"])
+tab_rank, tab_mine, tab_all, tab_admin = st.tabs(["순위", "내 기록", "전체 경기", "관리자"])
 
 
 @st.fragment(run_every=15)
@@ -472,3 +589,7 @@ with tab_mine:
 
 with tab_all:
     all_view()
+
+with tab_admin:
+    if admin_gate("admin_gate_tab"):
+        admin_page()
