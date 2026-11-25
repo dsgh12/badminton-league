@@ -337,42 +337,32 @@ def admin_page():
     h2.button("관리자 로그아웃", on_click=admin_logout, key="admin_out")
 
     ids = [m["id"] for m in ROSTER]
-    ALL = "전체 학생"
-    pick = st.selectbox("학생 선택", [ALL] + ids, key="admin_student",
-                        format_func=lambda i: i if i == ALL else f"{i}  {NAMES[i]}")
+    pick = st.selectbox("학생 선택", ids, key="admin_student",
+                        format_func=lambda i: f"{i}  {NAMES[i]}")
     st.caption(f"전체 {len(groups)}경기, 원본 기록 {len(rows)}건")
 
-    if pick == ALL:
-        summary = []
-        for m in ROSTER:
-            r = by_id.get(m["id"])
-            summary.append({
-                "순위": str(r["rank"]) if r else "-", "학번": m["id"], "이름": m["name"],
-                "경기": r["g"] if r else 0, "승": r["w"] if r else 0, "패": r["l"] if r else 0,
-                "승률": pct(r["rate"]) if r else "-", "총득점": r["pf"] if r else 0,
-                "총실점": r["pa"] if r else 0, "득실차": r["diff"] if r else 0,
-            })
-        st.dataframe(pd.DataFrame(summary), hide_index=True)
-        every = [row for sid in ids for row in reversed(student_rows(groups, sid))]
-        st.markdown("#### 학생별 경기 기록")
-        if every:
-            df_all = pd.DataFrame(every)
-            st.dataframe(df_all, hide_index=True)
-            st.download_button("전체 기록 내려받기(CSV)", csv_bytes(df_all), "badminton_all.csv", "text/csv", key="dl_all")
-        else:
-            st.markdown('<div class="empty">아직 등록된 경기가 없습니다.</div>', unsafe_allow_html=True)
-    else:
-        r = by_id.get(pick)
-        st.markdown(f"#### {esc(NAMES[pick])} ({esc(pick)})", unsafe_allow_html=True)
-        st.caption((f"{r['g']}경기 {r['w']}승 {r['l']}패 · 총득점 {r['pf']} · 총실점 {r['pa']} · 순위 {r['rank']}위(승수 기준)") if r else "아직 기록이 없습니다.")
-        mine = student_rows(groups, pick)
-        if mine:
-            df = pd.DataFrame(mine)[["학번", "이름", "경기 날짜", "상대", "점수", "경기 결과"]]
-            st.dataframe(df, hide_index=True)
-            st.download_button(f"{NAMES[pick]} 기록 내려받기(CSV)", csv_bytes(df),
-                               f"badminton_{pick}_{NAMES[pick]}.csv", "text/csv", key=f"dl_{pick}")
-        else:
-            st.markdown('<div class="empty">이 학생의 기록이 없습니다.</div>', unsafe_allow_html=True)
+    # 선택한 학생이 상대별로 치른 경기: 학번 순서대로 한 줄씩, 아직 없으면 빈칸
+    played = {}
+    for row in reversed(student_rows(groups, pick)):  # 날짜 오래된 순
+        oid = row["상대"].rsplit("(", 1)[-1].rstrip(")")
+        played.setdefault(oid, []).append(row)
+    table, wins, losses = [], 0, 0
+    for m in ROSTER:
+        games = played.get(m["id"], []) if m["id"] != pick else []
+        if not games:
+            table.append({"학번": m["id"], "이름": m["name"], "경기 날짜": "", "점수": "", "경기 결과": ""})
+            continue
+        for g in games:
+            wins += g["경기 결과"] == "승"
+            losses += g["경기 결과"] == "패"
+            table.append({"학번": m["id"], "이름": m["name"], "경기 날짜": g["경기 날짜"],
+                          "점수": g["점수"], "경기 결과": g["경기 결과"]})
+    df = pd.DataFrame(table)
+    st.markdown(f"#### {esc(NAMES[pick])} ({esc(pick)})", unsafe_allow_html=True)
+    st.dataframe(df, hide_index=True, height=min(38 * (len(df) + 1) + 3, 700))
+    st.markdown(f"**총 {wins}승 {losses}패**")
+    st.download_button(f"{NAMES[pick]} 기록 내려받기(CSV)", csv_bytes(df),
+                       f"badminton_{pick}_{NAMES[pick]}.csv", "text/csv", key=f"dl_{pick}")
 
     with st.expander("원본 기록(기록한 사람 기준)"):
         raw = sorted(rows, key=lambda r: str(r.get("created_at", "")), reverse=True)
