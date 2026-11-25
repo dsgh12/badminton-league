@@ -112,7 +112,10 @@ def build_groups(rows, me_id=None):
     return order
 
 
-def compute_standings(groups, names):
+RANK_BY = ["승수", "총득점"]
+
+
+def compute_standings(groups, names, by="승수"):
     table = {}
     for g in groups:
         for pid, pf, pa in ((g["a"], g["sa"], g["sb"]), (g["b"], g["sb"], g["sa"])):
@@ -128,11 +131,15 @@ def compute_standings(groups, names):
     for r in rows:
         r["rate"] = r["w"] / r["g"] if r["g"] else 0
         r["diff"] = r["pf"] - r["pa"]
-    rows.sort(key=lambda r: (-r["w"], -r["rate"], -r["diff"], -r["pf"], r["name"]))
+    if by == "총득점":
+        key = lambda r: (r["pf"], r["w"], r["diff"])
+    else:
+        key = lambda r: (r["w"], r["rate"], r["diff"], r["pf"])
+    rows.sort(key=lambda r: tuple(-v for v in key(r)) + (r["name"],))
     rank = 0
     for i, r in enumerate(rows):
         p = rows[i - 1] if i else None
-        tie = p and (p["w"], p["rate"], p["diff"], p["pf"]) == (r["w"], r["rate"], r["diff"], r["pf"])
+        tie = p and key(p) == key(r)
         if not tie:
             rank = i + 1
         r["rank"] = rank
@@ -148,15 +155,21 @@ def signed(n):
 
 
 # ---------- 화면 조각 ----------
-def podium_html(rows, me_id):
+def podium_html(rows, me_id, by="승수"):
     slots = []
     for idx in (1, 0, 2):
         r = rows[idx] if idx < len(rows) else None
         cls = f"slot p{idx + 1}" + ("" if r else " empty") + (" me" if r and r["id"] == me_id else "")
         medal = esc(r["rank"]) if r else "–"
         name = esc(r["name"]) if r else "대기 중"
-        sub1 = f"{r['w']}승 {r['l']}패" if r else ""
-        sub2 = f"승률 {pct(r['rate'])} · 득실 {signed(r['diff'])}" if r else ""
+        if not r:
+            sub1 = sub2 = ""
+        elif by == "총득점":
+            sub1 = f"총득점 {r['pf']}점"
+            sub2 = f"{r['w']}승 {r['l']}패 · 득실 {signed(r['diff'])}"
+        else:
+            sub1 = f"{r['w']}승 {r['l']}패"
+            sub2 = f"승률 {pct(r['rate'])} · 득실 {signed(r['diff'])}"
         slots.append(
             f'<div class="{cls}"><div class="medal">{medal}</div><div class="nm">{name}</div>'
             f'<div class="sub">{sub1}</div><div class="sub">{sub2}</div><div class="blk">{idx + 1}</div></div>'
@@ -164,19 +177,19 @@ def podium_html(rows, me_id):
     return f'<div class="pod">{"".join(slots)}</div>'
 
 
-def rest_table_html(rows, me_id):
+def rest_table_html(rows, me_id, by="승수"):
     rest = rows[3:]
     if not rest:
         return '<div class="empty">4위 이하 참가자는 아직 없습니다.</div>'
-    out = ['<div class="rt"><div class="r h"><span>순위</span><span>이름</span><span class="n">경기</span>'
-           '<span class="n">승</span><span class="n">패</span><span class="n">승률</span><span class="n">득실</span></div>']
+    out = [f'<div class="rt"><div class="r h"><span>순위</span><span>이름</span><span class="n">경기</span>'
+           f'<span class="n">승</span><span class="n">패</span><span class="n">{"득점" if by == "총득점" else "승률"}</span><span class="n">득실</span></div>']
     for r in rest:
         cls = "r me" if r["id"] == me_id else "r"
         dcls = "pos" if r["diff"] > 0 else "neg" if r["diff"] < 0 else ""
         out.append(
             f'<div class="{cls}"><span class="rk">{esc(r["rank"])}</span><span>{esc(r["name"])}</span>'
             f'<span class="n">{r["g"]}</span><span class="n">{r["w"]}</span><span class="n">{r["l"]}</span>'
-            f'<span class="n">{pct(r["rate"])}</span><span class="n {dcls}">{signed(r["diff"])}</span></div>'
+            f'<span class="n">{r["pf"] if by == "총득점" else pct(r["rate"])}</span><span class="n {dcls}">{signed(r["diff"])}</span></div>'
         )
     out.append("</div>")
     return "".join(out)
@@ -387,14 +400,16 @@ tab_rank, tab_mine, tab_all = st.tabs(["순위", "내 기록", "전체 경기"])
 
 @st.fragment(run_every=15)
 def rank_view():
+    by = st.radio("순위 기준", RANK_BY, horizontal=True, key="rank_by")
     groups = build_groups(load_matches())
-    rows = compute_standings(groups, NAMES)
-    st.markdown(podium_html(rows, ME["id"]), unsafe_allow_html=True)
+    rows = compute_standings(groups, NAMES, by)
+    st.markdown(podium_html(rows, ME["id"], by), unsafe_allow_html=True)
     if not rows:
         st.markdown('<div class="empty">아직 등록된 경기가 없습니다. 내 기록 탭에서 첫 경기를 기록해 보세요.</div>', unsafe_allow_html=True)
     else:
-        st.markdown(rest_table_html(rows, ME["id"]), unsafe_allow_html=True)
-    st.markdown('<div class="hint">정렬 기준: 승수, 승률, 득실차, 총득점 순. 양쪽이 모두 기록해도 날짜, 상대, 점수가 같으면 한 경기로 계산됩니다. 15초마다 자동으로 갱신됩니다.</div>', unsafe_allow_html=True)
+        st.markdown(rest_table_html(rows, ME["id"], by), unsafe_allow_html=True)
+    rule = "총득점, 승수, 득실차 순" if by == "총득점" else "승수, 승률, 득실차, 총득점 순"
+    st.markdown(f'<div class="hint">정렬 기준: {rule}. 양쪽이 모두 기록해도 날짜, 상대, 점수가 같으면 한 경기로 계산됩니다. 15초마다 자동으로 갱신됩니다.</div>', unsafe_allow_html=True)
 
 
 @st.fragment(run_every=15)
