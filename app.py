@@ -512,7 +512,7 @@ def delete_record(rec):
 
 
 # ---------- 탭 ----------
-tab_rank, tab_mine, tab_all, tab_admin = st.tabs(["순위", "내 기록", "전체 경기", "관리자"])
+tab_rank, tab_mine, tab_all = st.tabs(["순위", "내 기록", "전체 경기"])
 
 
 @st.fragment(run_every=15)
@@ -589,7 +589,3 @@ with tab_mine:
 
 with tab_all:
     all_view()
-
-with tab_admin:
-    if admin_gate("admin_gate_tab"):
-        admin_page()
