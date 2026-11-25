@@ -630,8 +630,12 @@ with tab_mine:
         st.subheader("경기 기록 수정" if editing else "경기 결과 기록")
         st.date_input("경기 날짜", key="f_date")
         options = [r["id"] for r in ROSTER if r["id"] != ME["id"]]
-        st.selectbox("상대 선택", options, index=None, key="f_opp", placeholder="상대를 선택하세요",
-                     format_func=lambda i: f"{NAMES[i]}({i})")
+        opp_args = dict(index=None, key="f_opp", placeholder="상대를 선택하세요",
+                        format_func=lambda i: f"{NAMES[i]}({i})")
+        try:  # 타자 입력(키보드) 없이 목록에서만 고르게 한다
+            st.selectbox("상대 선택", options, filter_mode=None, **opp_args)
+        except TypeError:  # 구버전 Streamlit
+            st.selectbox("상대 선택", options, **opp_args)
         s1, s2 = st.columns(2)
         s1.number_input("내 점수", min_value=0, max_value=99, step=1, value=None, key="f_my", placeholder="0")
         s2.number_input("상대 점수", min_value=0, max_value=99, step=1, value=None, key="f_op", placeholder="0")
